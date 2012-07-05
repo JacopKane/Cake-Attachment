@@ -1,6 +1,6 @@
 <?php
-
 App::uses('Folder', 'Utility');
+App::uses('Resizer/Resize', 'Vendor');
 
 /**
  *  Upload Behaviour
@@ -56,7 +56,7 @@ class UploadBehavior extends ModelBehavior {
   public function beforeSave(Model $Model, $cascade = true) {
     parent::beforeDelete($Model);
 
-    $uploadedFiles	= array();
+    $uploadedFiles  = array();
     $error = true;
     foreach ($this->settings[$Model->alias] as $field => $fileValues) {
       if($field == 'defaultSettings') continue;
@@ -211,7 +211,10 @@ class UploadBehavior extends ModelBehavior {
       // This is hard-coded to only support JPEG + PNG + GIF at this time
       if (count($allowedExt) > 0 && (in_array($Model->data[$Model->alias][$field]['type'], $allowedMime)) ||  in_array('*', $allowedMime)) {
         foreach ($thumbsizes as $key => $value) {
-          if(!isset($value['proportional'])) $value['proportional'] = true;
+
+          $value['proportional'] = !isset($value['proportional']) ? true : $value['proportional'];
+          $value['crop'] = !isset($value['crop']) ? true : $value['crop'];
+          
           $thumbName = $this->getThumbname ($Model, $fileValues, $key, $uploadedFiles[$field]['filename']);
           $this->createthumb(
             $Model, 
@@ -219,7 +222,9 @@ class UploadBehavior extends ModelBehavior {
             $uploadedFiles[$field]['dir'] . DS . $thumbName, 
             $value['width'], 
             $value['height'], 
-            $value['proportional']);
+            $value['proportional'],
+            $value['crop']
+          );
         }
       }
 
@@ -265,7 +270,15 @@ class UploadBehavior extends ModelBehavior {
 
   // Method to create thumbnail image
 
-  public function createthumb(&$Model, $name, $filename, $new_w, $new_h, $proportional = true) {
+  public function createthumb(&$Model, $name, $filename, $width, $height, $proportional = true, $crop = false) {
+    debug(compact('name', 'filename', 'width', 'height', 'proportional', 'crop'));
+
+    $dst = (object) array('x' => 0, 'y' => 0, 'w' => 'auto', 'h' => 'auto');
+    $thumb = (object) array('x' => 0, 'y' => 0, 'w' => 'auto', 'h' => 'auto');
+    $src = (object) array('x' => 0, 'y' => 0, 'w' => 'auto', 'h' => 'auto');
+
+    $system = explode(".", basename($name));
+    $extension = array_pop($system);
 
     $system = explode(".", basename($name));
     $extension = array_pop($system);
@@ -281,57 +294,63 @@ class UploadBehavior extends ModelBehavior {
       $src_img = null;
     }
 
-    $old_x = imagesx($src_img);
-    $old_y = imagesy($src_img);
+    $src->w  = imagesx($src_img);
+    $src->h = imagesy($src_img);
 
-    if ($new_w == 'auto' && $new_h != 'auto') {
+    $thumb->w = $dst->w = $width;
+    $thumb->h = $dst->h = $height;
 
-      $thumb_h = $new_h;
-      $ratio = $old_x / $old_y;
-      $thumb_w = $ratio * $new_h;
 
-    } elseif ($new_h == 'auto' && $new_w != 'auto') {
+    if ($dst->w == 'auto' && $dst->h != 'auto') {
 
-      $thumb_w = $new_w;
-      $ratio = $old_y / $old_x;
-      $thumb_h = $ratio * $new_w;
+      $thumb->h = $dst->h;
+      $ratio = $src->w / $src->h;
+      $thumb->w = $ratio * $dst->h;
 
-    } elseif ($proportional && $new_h != 'auto' && $new_w != 'auto') {
+    } elseif ($dst->h == 'auto' && $dst->w != 'auto') {
 
-      if ($old_x >= $old_y) {
+      $thumb->w = $dst->w;
+      $ratio = $src->h / $src->w;
+      $thumb->h = $ratio * $dst->w;
 
-        $thumb_w = $new_w;
-        $ratio = $old_y / $old_x;
-        $thumb_h = $ratio * $new_w;
+    } elseif ($proportional && $dst->h != 'auto' && $dst->w != 'auto') {
 
-        if($thumb_h > $new_h) {
+      if ($src->w >= $src->h) {
+
+        $thumb->w = $dst->w;
+        $ratio = $src->h / $src->w;
+        $thumb->h = $ratio * $dst->w;
+
+        if($thumb->h > $dst->h) {
           
-          $thumb_h = $new_h;
-          $ratio = $thumb_w / $thumb_h;
-          $thumb_w = $ratio * $new_h;
+          $thumb->h = $dst->h;
+          $ratio = $thumb->w / $thumb->h;
+          $thumb->w = $ratio * $dst->h;
           
         }
 
-      } elseif ($old_x < $old_y) {
+      } elseif ($src->w < $src->h) {
 
-        $thumb_h = $new_h;
-        $ratio = $old_x / $old_y;
-        $thumb_w = $ratio * $new_h;
+        $thumb->h = $dst->h;
+        $ratio = $src->w / $src->h;
+        $thumb->w = $ratio * $dst->h;
 
-        if($thumb_w > $new_w) {
-          $thumb_w = $new_w;
-          $ratio = $thumb_h / $thumb_w;
-          $thumb_h = $ratio * $new_w;
+        if($thumb->w > $dst->w) {
+          $thumb->w = $dst->w;
+          $ratio = $thumb->h / $thumb->w;
+          $thumb->h = $ratio * $dst->w;
         }
-
       }
-    } else {
-      $thumb_w = $new_w;
-      $thumb_h = $new_h;
     }
 
+    if ($crop && $dst->h != 'auto' && $dst->w != 'auto') {
+      App::import('Vendor', 'Resizer/Resize');
+      $resizeObj = new Resize($name);
+      $resizeObj->resizeImage($dst->w, $dst->h, 'crop');
+      return $resizeObj->saveImage($filename, 100);
+    }
 
-    $dst_img = imagecreatetruecolor($thumb_w, $thumb_h);
+    $dst_img = imagecreatetruecolor($thumb->w, $thumb->h);
 
     //transparent background..
 
@@ -339,8 +358,7 @@ class UploadBehavior extends ModelBehavior {
     imagesavealpha($dst_img, true);
 
     //end
-
-    imagecopyresampled($dst_img, $src_img, 0, 0, 0, 0, $thumb_w, $thumb_h, $old_x, $old_y);
+    imagecopyresampled($dst_img , $src_img, $dst->x, $dst->y, $src->x, $src->y, $thumb->w, $thumb->h, $src->w, $src->h);
 
     if (preg_match("/png/", $extension)) {
       imagepng($dst_img, $filename);
@@ -355,8 +373,6 @@ class UploadBehavior extends ModelBehavior {
     imagedestroy($src_img);
   }
 
-
-
   public function getThumbname ($Model, $fileValues, $thumbsize, $filename, $extension = null) {
 
     if ($extension == null ) {
@@ -369,7 +385,7 @@ class UploadBehavior extends ModelBehavior {
     extract($mergedSettings[$thumbsize]);
 
     if (strpos($name, '{') === false) {
-      return $name.$filename.'.'.$extension;
+      return "{$name}{$filename}.{$extension}";
     }
 
     $markers = array('{$file}', '{$ext}');
@@ -670,4 +686,3 @@ class UploadBehavior extends ModelBehavior {
   }
 
 }
-
