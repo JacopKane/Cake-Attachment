@@ -1,6 +1,5 @@
 <?php
 App::uses('Folder', 'Utility');
-App::uses('Resizer/Resize', 'Vendor');
 
 /**
  *  Upload Behaviour
@@ -344,7 +343,7 @@ class UploadBehavior extends ModelBehavior {
     }
 
     if ($crop && $dst->h != 'auto' && $dst->w != 'auto') {
-      App::import('Vendor', 'Resizer/Resize');
+      App::import('Vendor', 'Attachment.Resizer/Resize');
       $resizeObj = new Resize($name);
       $resizeObj->resizeImage($dst->w, $dst->h, 'crop');
       return $resizeObj->saveImage($filename, 100);
